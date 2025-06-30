@@ -271,7 +271,7 @@ def load_and_process_data_ultra_fast(file_data):
                                        df['Posting Date'].dt.year)
         
         # Catégorie Make/Buy - vectorisé ultra-rapide
-        make_controllers = {'M01', 'M04', 'M06', 'MDM', 'P0E', 'P0F', 'P0N', 'PFA', 'P0G', 'PNP', 'PPD', 'PPO', 'PSD'}
+        make_controllers = {'M01', 'M04', 'M06', 'MDM', 'P0E', 'P0F', 'P0N', 'PFA', 'P0G', 'PNP', 'PPD', 'PPO', 'PSD','M70'}
         df['Catégorie Produit'] = np.where(df['Material MRP Controller'].str.strip().isin(make_controllers), 'Make', 'Buy')
         
         # Identifiants - concaténation vectorisée
