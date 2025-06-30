@@ -274,8 +274,13 @@ def load_and_process_data_ultra_fast(file_data):
         
         # Catégorie Make/Buy - vectorisé ultra-rapide
         make_controllers = {'M01', 'M04', 'M06', 'MDM', 'P0E', 'P0F', 'P0N', 'PFA', 'P0G', 'PNP', 'PPD', 'PPO', 'PSD','M70'}
-        df['Catégorie Produit'] = np.where(df['Material MRP Controller'].str.strip().isin(make_controllers), 'Make', 'Buy')
-        
+        # Catégorie Make/Buy - avec exception pour Y4950100
+        df['Catégorie Produit'] = np.where(
+            (df['Material MRP Controller'].str.strip().isin(make_controllers)) & (df['Material Y#'] != 'Y4950100'), 
+            'Make', 
+            'Buy'
+        )        
+
         # Identifiants - concaténation vectorisée
         df['Produit Unique'] = df['Material Y#'].astype(str) + '_' + df['Material Entered #'].astype(str)
         df['Client Unique'] = df['ShipTo #'].astype(str) + '_' + df['ShipTo Name'].astype(str)
