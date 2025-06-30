@@ -235,6 +235,8 @@ def load_and_process_data_ultra_fast(file_data):
         }
         
         df = pd.read_excel(file_data, dtype=dtype_dict, engine='openpyxl')
+        # Remplacer Material Entered # par vide pour Y4950100
+        df.loc[df['Material Y#'] == 'Y4950100', 'Material Entered #'] = ''
         
         # Vérification colonnes - optimisée
         required_columns = [
