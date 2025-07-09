@@ -553,11 +553,45 @@ def main():
         format_func=lambda x: ['Août','Sep','Oct','Nov','Déc','Jan','Fév','Mar','Avr','Mai','Jun','Jul'][x-8]
     )
     
-    categories = ['Tous'] + list(df['Catégorie Produit'].unique())
-    category = st.sidebar.selectbox("Catégorie", categories)
+    # Filtres interdépendants Catégorie/Gamme
+    # D'abord, on filtre par année et période pour avoir les bonnes données
+    mask_year_period = (df['Année Fiscale'] == fiscal_year)
+    if period_range != (8, 19):
+        start_month = period_range[0] if period_range[0] <= 12 else period_range[0] - 12
+        end_month = period_range[1] if period_range[1] <= 12 else period_range[1] - 12
+        
+        if period_range[0] <= 12 and period_range[1] <= 12:
+            mask_year_period &= (df['Posting Date'].dt.month >= start_month) & (df['Posting Date'].dt.month <= end_month)
+        elif period_range[0] > 12 and period_range[1] > 12:
+            mask_year_period &= (df['Posting Date'].dt.month >= start_month) & (df['Posting Date'].dt.month <= end_month)
+        else:
+            mask_year_period &= (df['Posting Date'].dt.month >= start_month) | (df['Posting Date'].dt.month <= end_month)
     
-    product_lines = ['Tous'] + sorted(df['Product Line Desc'].dropna().astype(str).unique())
-    product_line = st.sidebar.selectbox("Gamme", product_lines)
+    df_filtered_year_period = df[mask_year_period]
+    
+    # Obtenir toutes les catégories et gammes disponibles
+    all_categories = ['Tous'] + sorted(df_filtered_year_period['Catégorie Produit'].unique())
+    all_product_lines = ['Tous'] + sorted(df_filtered_year_period['Product Line Desc'].dropna().astype(str).unique())
+    
+    # Sélection de la catégorie
+    category = st.sidebar.selectbox("Catégorie", all_categories, key="category_select")
+    
+    # Si une catégorie est sélectionnée, filtrer les gammes disponibles
+    if category != 'Tous':
+        available_product_lines = df_filtered_year_period[df_filtered_year_period['Catégorie Produit'] == category]['Product Line Desc'].dropna().astype(str).unique()
+        product_lines = ['Tous'] + sorted(available_product_lines)
+    else:
+        product_lines = all_product_lines
+    
+    # Sélection de la gamme
+    product_line = st.sidebar.selectbox("Gamme", product_lines, key="product_line_select")
+    
+    # Si une gamme est sélectionnée et catégorie est "Tous", mettre à jour la catégorie
+    if product_line != 'Tous' and category == 'Tous':
+        available_categories = df_filtered_year_period[df_filtered_year_period['Product Line Desc'].astype(str) == product_line]['Catégorie Produit'].unique()
+        if len(available_categories) == 1:
+            category = available_categories[0]
+            st.sidebar.info(f"Catégorie automatiquement définie : {category}")
     
     # Application filtres ultra-rapide
     filtered_df = apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_line)
@@ -621,14 +655,14 @@ def main():
                 st.markdown("#### 🎯 Gammes de Produits")
                 product_line_analysis = filtered_df.groupby('Product Line Desc').agg({
                     'Customer Sales': 'sum',
-                    'Customer Margin $'  : 'sum',
+                    'Customer Margin $': 'sum',
                     'Écart en jours': 'mean',
                     'Produit Unique': 'nunique'
                 }).reset_index()
                 
                 product_line_analysis['Marge %'] = np.where(
                     product_line_analysis['Customer Sales'] > 0,
-                    (product_line_analysis['Customer Margin $'] / product_line_analysis['Customer Sales'] * 100),
+                    (product_line_analysis['Customer Margin $'  ] / product_line_analysis['Customer Sales'] * 100),
                     0
                 )
                 
@@ -636,7 +670,7 @@ def main():
 
                 display_df = product_line_analysis.copy()
                 display_df['Customer Sales'] = display_df['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
-                display_df['Customer Margin $'] = display_df['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
+                display_df['Customer Margin $'  ] = display_df['Customer Margin $' ].apply(lambda x: f"{x:,.2f} €")
                 display_df['Marge %'] = display_df['Marge %'].apply(lambda x: f"{x:.2f} %")
                 display_df['Écart en jours'] = display_df['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
                 
@@ -682,14 +716,14 @@ def main():
             st.markdown("#### 🗺️ Analyse par Région")
             regional_analysis = filtered_df.groupby('Région').agg({
                 'Customer Sales': 'sum',
-                'Customer Margin $': 'sum',
+                'Customer Margin $'  : 'sum',
                 'Client Unique': 'nunique',
                 'Écart en jours': 'mean'
             }).reset_index()
             
             regional_analysis['Marge %'] = np.where(
                 regional_analysis['Customer Sales'] > 0,
-                (regional_analysis['Customer Margin $'] / regional_analysis['Customer Sales'] * 100),
+                (regional_analysis['Customer Margin $' ] / regional_analysis['Customer Sales'] * 100),
                 0
             )
             
