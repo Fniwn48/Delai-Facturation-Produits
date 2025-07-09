@@ -222,7 +222,6 @@ def load_and_process_data_ultra_fast(file_data):
         dtype_dict = {
             'Sales Document #': 'string',
             'Material Y#': 'string', 
-            'Material Entered #': 'string',
             'Material Desc': 'string',
             'Material MRP Controller': 'string',
             'Product Line Desc': 'string',
@@ -235,13 +234,11 @@ def load_and_process_data_ultra_fast(file_data):
         }
         
         df = pd.read_excel(file_data, dtype=dtype_dict, engine='openpyxl')
-        # Remplacer Material Entered # par vide pour Y4950100
-        df.loc[df['Material Y#'] == 'Y4950100', 'Material Entered #'] = ''
         
         # Vérification colonnes - optimisée
         required_columns = [
             'Posting Date', 'Customer Purchase Order Date', 'Sales Document #',
-            'Material Y#', 'Material Entered #', 'Material Desc', 'Material MRP Controller',
+            'Material Y#', 'Material Desc', 'Material MRP Controller',
             'Product Line Desc', 'ShipTo #', 'ShipTo Name', 'SoldTo City', 'SoldTo Postal Code', 'SoldTo Country',
             'Customer Sales', 'Customer Margin $', 'Customer Margin %'
         ]
@@ -259,15 +256,15 @@ def load_and_process_data_ultra_fast(file_data):
         df['Posting Date'] = pd.to_datetime(df['Posting Date'], errors='coerce', infer_datetime_format=True)
         df['Customer Purchase Order Date'] = pd.to_datetime(df['Customer Purchase Order Date'], errors='coerce', infer_datetime_format=True)
         
-        # Suppression des NaN - vectorisé
-        mask = df['Posting Date'].notna() & df['Customer Purchase Order Date'].notna()
-        df = df[mask].copy()
-        
-        if len(df) == 0:
-            return None, "Aucune date valide trouvée"
+        # Calcul des délais UNIQUEMENT pour les lignes avec les deux dates valides
+        mask_dates_valides = df['Posting Date'].notna() & df['Customer Purchase Order Date'].notna()
+        df['Écart en jours'] = np.nan  # Initialiser avec NaN
+        df.loc[mask_dates_valides, 'Écart en jours'] = (
+            df.loc[mask_dates_valides, 'Posting Date'] - 
+            df.loc[mask_dates_valides, 'Customer Purchase Order Date']
+        ).dt.days
         
         # Calculs vectorisés ULTRA-RAPIDES
-        df['Écart en jours'] = (df['Posting Date'] - df['Customer Purchase Order Date']).dt.days
         df['Année Fiscale'] = np.where(df['Posting Date'].dt.month >= 8, 
                                        df['Posting Date'].dt.year + 1, 
                                        df['Posting Date'].dt.year)
@@ -281,8 +278,8 @@ def load_and_process_data_ultra_fast(file_data):
             'Buy'
         )        
 
-        # Identifiants - concaténation vectorisée
-        df['Produit Unique'] = df['Material Y#'].astype(str) + '_' + df['Material Entered #'].astype(str)
+        # Identifiants - utiliser seulement Material Y# pour les produits
+        df['Produit Unique'] = df['Material Y#'].astype(str)
         df['Client Unique'] = df['ShipTo #'].astype(str) + '_' + df['ShipTo Name'].astype(str)
         
         # Région - fonction vectorisée
@@ -303,10 +300,9 @@ def format_dataframe_for_display(df, df_type="standard"):
         df_formatted['Customer Sales'] = df_formatted['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['Customer Margin $'] = df_formatted['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['% Marge'] = df_formatted['% Marge'].apply(lambda x: f"{x:.2f} %")
-        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j")
+        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
         df_formatted = df_formatted.rename(columns={
             'Material Y#': 'Material',
-            'Material Entered #': 'Material Entered',
             'Customer Sales': 'CA',
             'Customer Margin $': 'Marge €',
             'Écart en jours': 'Délai Moy.'
@@ -317,7 +313,7 @@ def format_dataframe_for_display(df, df_type="standard"):
         df_formatted['Customer Sales'] = df_formatted['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['Customer Margin $'] = df_formatted['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['% Marge'] = df_formatted['% Marge'].apply(lambda x: f"{x:.2f} %")
-        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j")
+        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
         
         # Renommer les colonnes
         df_formatted = df_formatted.rename(columns={
@@ -339,7 +335,7 @@ def format_dataframe_for_display(df, df_type="standard"):
         df_formatted['Customer Sales'] = df_formatted['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['Customer Margin $'] = df_formatted['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
         df_formatted['Marge %'] = df_formatted['Marge %'].apply(lambda x: f"{x:.2f} %")
-        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j")
+        df_formatted['Écart en jours'] = df_formatted['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
         
         # Renommer les colonnes
         df_formatted = df_formatted.rename(columns={
@@ -363,8 +359,11 @@ def create_all_analyses_batch(df):
         return {}, {}, {}, {}, {}
     
     # Métriques globales - vectorisé
+    # Pour les délais, on ne prend que les lignes avec des dates valides
+    delais_valides = df['Écart en jours'].dropna()
+    
     metrics = {
-        'Moyenne jours facturation': df['Écart en jours'].mean(),
+        'Moyenne jours facturation': delais_valides.mean() if len(delais_valides) > 0 else 0,
         'Produits différents': df['Produit Unique'].nunique(),
         'Nombre total lignes': len(df),
         'Commandes différentes': df['Sales Document #'].nunique(),
@@ -373,8 +372,9 @@ def create_all_analyses_batch(df):
         'Marge totale (€)': df['Customer Margin $'].sum()
     }
     
-        # Analyse produits - groupby optimisé avec délais min/max et filtrage CA positif
-    product_analysis = df.groupby(['Material Y#', 'Material Entered #', 'Material Desc']).agg({
+    # Analyse produits - groupby optimisé avec délais min/max et filtrage CA positif
+    # Utiliser seulement Material Y# pour identifier les produits
+    product_analysis = df.groupby(['Material Y#', 'Material Desc']).agg({
         'Customer Sales': 'sum',
         'Customer Margin $': 'sum',
         'Sales Document #': 'nunique',
@@ -382,7 +382,7 @@ def create_all_analyses_batch(df):
     }).reset_index()
 
     # Aplatir les colonnes multi-index
-    product_analysis.columns = ['Material Y#', 'Material Entered #', 'Material Desc', 
+    product_analysis.columns = ['Material Y#', 'Material Desc', 
                             'Customer Sales', 'Customer Margin $', 'Nb Commandes',
                             'Écart en jours', 'Délai Min', 'Délai Max']
 
@@ -482,7 +482,6 @@ def create_visualizations_batch(df):
     return fig_monthly, fig_category
 
 @st.cache_data(ttl=1800, max_entries=5, show_spinner=False)
-@st.cache_data(ttl=1800, max_entries=5, show_spinner=False)
 def create_client_visualizations(df):
     """Crée les visualisations spécifiques aux clients - CORRIGÉ pour toutes les régions"""
     if len(df) == 0:
@@ -544,7 +543,9 @@ def main():
     # Filtres optimisés
     st.sidebar.markdown("### Filtres")
     
-    available_years = sorted(df['Année Fiscale'].unique())
+    # Filtrer les années valides et les convertir en int
+    available_years = df['Année Fiscale'].dropna().unique()
+    available_years = sorted([int(year) for year in available_years if pd.notna(year)])
     fiscal_year = st.sidebar.selectbox("Année Fiscale", available_years)
     
     period_range = st.sidebar.select_slider(
@@ -620,7 +621,7 @@ def main():
                 st.markdown("#### 🎯 Gammes de Produits")
                 product_line_analysis = filtered_df.groupby('Product Line Desc').agg({
                     'Customer Sales': 'sum',
-                    'Customer Margin $': 'sum',
+                    'Customer Margin $'  : 'sum',
                     'Écart en jours': 'mean',
                     'Produit Unique': 'nunique'
                 }).reset_index()
@@ -637,13 +638,13 @@ def main():
                 display_df['Customer Sales'] = display_df['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
                 display_df['Customer Margin $'] = display_df['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
                 display_df['Marge %'] = display_df['Marge %'].apply(lambda x: f"{x:.2f} %")
-                display_df['Écart en jours'] = display_df['Écart en jours'].apply(lambda x: f"{x:.1f} j")
+                display_df['Écart en jours'] = display_df['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
                 
                 # Renommer les colonnes pour l'affichage
                 display_df = display_df.rename(columns={
                     'Product Line Desc': 'Gamme de Produit',
                     'Customer Sales': 'CA',
-                    'Customer Margin $': 'Marge €',
+                    'Customer Margin $' : 'Marge €',
                     'Marge %': 'Marge %',
                     'Écart en jours': 'Délai Moy.',
                     'Produit Unique': 'Nb Produits'
@@ -697,15 +698,15 @@ def main():
             # Formatage pour l'affichage
             display_regional = regional_analysis.copy()
             display_regional['Customer Sales'] = display_regional['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
-            display_regional['Customer Margin $'] = display_regional['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
+            display_regional['Customer Margin $' ] = display_regional['Customer Margin $' ].apply(lambda x: f"{x:,.2f} €")
             display_regional['Marge %'] = display_regional['Marge %'].apply(lambda x: f"{x:.2f} %")
-            display_regional['Écart en jours'] = display_regional['Écart en jours'].apply(lambda x: f"{x:.1f} j")
+            display_regional['Écart en jours'] = display_regional['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
             
             # Renommer les colonnes
             display_regional = display_regional.rename(columns={
                 'Région': 'Région',
                 'Customer Sales': 'CA',
-                'Customer Margin $': 'Marge €',
+                'Customer Margin $' : 'Marge €',
                 'Marge %': 'Marge %',
                 'Client Unique': 'Nb Clients',
                 'Écart en jours': 'Délai Moy.'
