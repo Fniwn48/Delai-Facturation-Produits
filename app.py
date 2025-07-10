@@ -588,7 +588,7 @@ def main():
             uploaded_file = st.file_uploader("Sélectionnez le fichier Excel principal", type=['xlsx', 'xls'], key="main_file")
             
         with col2:
-            st.markdown("#### 📁 Fichier VC")
+            st.markdown("###### 📁 Fichier VC")
             vc_file = st.file_uploader("Sélectionnez le fichier VC (optionnel)", type=['xlsx', 'xls'], key="vc_file")
         
         # Bouton pour charger les fichiers
@@ -631,18 +631,16 @@ def main():
     # Si les fichiers sont chargés, utiliser les données du session state
     df = st.session_state.df
     
-    # Bouton pour réinitialiser et charger de nouveaux fichiers - avec style personnalisé
-    col1_btn, col2_btn, col3_btn = st.sidebar.columns([1, 2, 1])
-    with col2_btn:
-        if st.button("🔄 Nouveaux fichiers", type="secondary"):
-            st.session_state.main_file_loaded = False
-            st.session_state.vc_file_loaded = False
-            st.session_state.vc_materials = None
-            st.session_state.df = None
-            st.rerun()
+    # Bouton pour retourner à l'importation
+    if st.sidebar.button("🏠 Recommencer", type="primary"):
+        st.session_state.main_file_loaded = False
+        st.session_state.vc_file_loaded = False
+        st.session_state.vc_materials = None
+        st.session_state.df = None
+        st.rerun()
     
     # Filtres optimisés
-    st.sidebar.markdown("### Filtres")
+    st.sidebar.markdown("#### Filtres")
     
     # Filtrer les années valides et les convertir en int
     available_years = df['Année Fiscale'].dropna().unique()
