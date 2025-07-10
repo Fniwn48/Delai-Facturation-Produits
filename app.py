@@ -215,8 +215,26 @@ def clean_numeric_column(series):
     return series
 
 @st.cache_data(ttl=3600, max_entries=5, show_spinner=False)
-def load_and_process_data_ultra_fast(file_data):
-    """Version ultra-optimisée du chargement de données avec gestion des erreurs de conversion"""
+def load_vc_file(vc_file_data):
+    """Charge le fichier VC et retourne la liste des materials VC"""
+    try:
+        vc_df = pd.read_excel(vc_file_data, engine='openpyxl')
+        
+        # Vérifier si la colonne Material existe
+        if 'Material' not in vc_df.columns:
+            return None, "La colonne 'Material' n'est pas trouvée dans le fichier VC"
+        
+        # Récupérer la liste unique des materials VC
+        vc_materials = vc_df['Material'].dropna().unique().tolist()
+        
+        return vc_materials, f"✅ {len(vc_materials)} materials VC chargés"
+        
+    except Exception as e:
+        return None, f"Erreur lors du chargement du fichier VC: {str(e)}"
+
+@st.cache_data(ttl=3600, max_entries=5, show_spinner=False)
+def load_and_process_data_ultra_fast(file_data, vc_materials=None):
+    """Version ultra-optimisée du chargement de données avec gestion des erreurs de conversion et ajout Type VC"""
     try:
         # Lecture sans spécifier les types pour les colonnes numériques problématiques
         dtype_dict = {
@@ -277,6 +295,31 @@ def load_and_process_data_ultra_fast(file_data):
             'Make', 
             'Buy'
         )        
+
+        # AJOUT DE LA COLONNE TYPE VC
+        if vc_materials is not None:
+            # Convertir vc_materials en set pour des recherches plus rapides
+            vc_materials_set = set(vc_materials)
+            
+            def categorize_material(x):
+                # Gérer les valeurs NaN/None
+                if pd.isna(x) or x is None:
+                    return "Standard"
+                # Convertir en string pour la comparaison
+                x_str = str(x).strip()
+                if x_str == "Y5010646":
+                    return "Install"
+                elif x_str in vc_materials_set:
+                    return "VC"
+                else:
+                    return "Standard"
+            
+            df['Type VC'] = df['Material Y#'].apply(categorize_material)
+        else:
+            # Si pas de fichier VC, tout est Standard sauf Y5010646
+            df['Type VC'] = df['Material Y#'].apply(
+                lambda x: "Install" if pd.notna(x) and str(x).strip() == "Y5010646" else "Standard"
+            )
 
         # Identifiants - utiliser seulement Material Y# pour les produits
         df['Produit Unique'] = df['Material Y#'].astype(str)
@@ -434,8 +477,8 @@ def create_all_analyses_batch(df):
     return metrics, product_analysis, client_analysis, city_analysis
 
 @st.cache_data(ttl=1800, max_entries=10, show_spinner=False)
-def apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_line):
-    """Application ultra-rapide des filtres avec masques vectorisés"""
+def apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_line, type_vc_list):
+    """Application ultra-rapide des filtres avec masques vectorisés - MODIFIÉ pour multiselect Type VC"""
     if len(df) == 0:
         return df
     
@@ -460,6 +503,10 @@ def apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_li
     
     if product_line != 'Tous':
         mask &= df['Product Line Desc'].astype(str) == product_line
+    
+    # AJOUT DU FILTRE TYPE VC - MULTISELECT
+    if type_vc_list and len(type_vc_list) > 0:  # Si une sélection existe
+        mask &= df['Type VC'].isin(type_vc_list)
     
     return df[mask].copy()
 
@@ -523,22 +570,76 @@ def main():
     # Interface ultra-minimaliste
     st.markdown('<div class="main-header"><h4>📊 Analyse des performances des produits</h></div>', unsafe_allow_html=True)
     
-    # Upload optimisé
-    uploaded_file = st.sidebar.file_uploader("📁 Excel", type=['xlsx', 'xls'], help="Import rapide")
+    # État de session pour stocker les fichiers
+    if 'main_file_loaded' not in st.session_state:
+        st.session_state.main_file_loaded = False
+    if 'vc_file_loaded' not in st.session_state:
+        st.session_state.vc_file_loaded = False
+    if 'vc_materials' not in st.session_state:
+        st.session_state.vc_materials = None
+    if 'df' not in st.session_state:
+        st.session_state.df = None
     
-    if uploaded_file is None:
-        st.info("👈 Importez votre fichier Excel")
+    if not st.session_state.main_file_loaded or not st.session_state.vc_file_loaded:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("###### 📁 Fichier délais de facturation")
+            uploaded_file = st.file_uploader("Sélectionnez le fichier Excel principal", type=['xlsx', 'xls'], key="main_file")
+            
+        with col2:
+            st.markdown("#### 📁 Fichier VC")
+            vc_file = st.file_uploader("Sélectionnez le fichier VC (optionnel)", type=['xlsx', 'xls'], key="vc_file")
+        
+        # Bouton pour charger les fichiers
+        col1, col2, col3 = st.columns([4, 1, 4])
+        with col2:
+            if st.button("🚀 Charger les fichiers", type="primary"):
+                if uploaded_file is not None:
+                    # Charger d'abord le fichier VC si présent
+                    if vc_file is not None:
+                        with st.spinner("🔄 Chargement du fichier VC..."):
+                            vc_materials, vc_status = load_vc_file(vc_file)
+                            if vc_materials is not None:
+                                st.session_state.vc_materials = vc_materials
+                                st.session_state.vc_file_loaded = True
+                                st.success(vc_status)
+                            else:
+                                st.error(vc_status)
+                                return
+                    else:
+                        st.session_state.vc_materials = None
+                        st.session_state.vc_file_loaded = True
+                    
+                    # Charger le fichier principal
+                    with st.spinner("🔄 Chargement et nettoyage des données principales..."):
+                        df, status = load_and_process_data_ultra_fast(uploaded_file, st.session_state.vc_materials)
+                        if df is not None:
+                            st.session_state.df = df
+                            st.session_state.main_file_loaded = True
+                            st.success(f"✅ {len(df):,} lignes chargées avec succès!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Erreur: {status}")
+                            return
+                else:
+                    st.warning("⚠️ Veuillez sélectionner au moins le fichier principal")
+        
+        # Si les fichiers ne sont pas encore chargés, arrêter ici
         return
     
-    # Chargement ultra-rapide
-    with st.spinner("🔄 Chargement et nettoyage des données..."):
-        df, status = load_and_process_data_ultra_fast(uploaded_file)
+    # Si les fichiers sont chargés, utiliser les données du session state
+    df = st.session_state.df
     
-    if df is None:
-        st.error(f"❌ Erreur: {status}")
-        return
-    
-    st.success(f"✅ {len(df):,} lignes chargées avec succès!")
+    # Bouton pour réinitialiser et charger de nouveaux fichiers - avec style personnalisé
+    col1_btn, col2_btn, col3_btn = st.sidebar.columns([1, 2, 1])
+    with col2_btn:
+        if st.button("🔄 Nouveaux fichiers", type="secondary"):
+            st.session_state.main_file_loaded = False
+            st.session_state.vc_file_loaded = False
+            st.session_state.vc_materials = None
+            st.session_state.df = None
+            st.rerun()
     
     # Filtres optimisés
     st.sidebar.markdown("### Filtres")
@@ -593,8 +694,24 @@ def main():
             category = available_categories[0]
             st.sidebar.info(f"Catégorie automatiquement définie : {category}")
     
-    # Application filtres ultra-rapide
-    filtered_df = apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_line)
+    # AJOUT DU FILTRE TYPE VC - MULTISELECT
+    # Obtenir les types VC disponibles après les autres filtres
+    mask_filters = mask_year_period
+    if category != 'Tous':
+        mask_filters &= (df['Catégorie Produit'] == category)
+    if product_line != 'Tous':
+        mask_filters &= (df['Product Line Desc'].astype(str) == product_line)
+    
+    available_type_vc = sorted(df[mask_filters]['Type VC'].unique())
+    type_vc_selected = st.sidebar.multiselect(
+        "Type VC", 
+        options=available_type_vc,
+        default=available_type_vc,  # Par défaut, tout est sélectionné
+        key="type_vc_multiselect"
+    )
+    
+    # Application filtres ultra-rapide avec Type VC
+    filtered_df = apply_filters_ultra_fast(df, fiscal_year, period_range, category, product_line, type_vc_selected)
     
     if len(filtered_df) == 0:
         st.warning("⚠️ Aucune donnée ne correspond aux filtres sélectionnés")
@@ -631,8 +748,21 @@ def main():
 
     with tab1:
         if len(product_df) > 0:
+            # AJOUT DE LA COLONNE TYPE VC DANS L'ANALYSE PRODUITS
+            # Merge avec les données filtrées pour obtenir le Type VC
+            product_df_with_type = product_df.merge(
+                filtered_df[['Material Y#', 'Type VC']].drop_duplicates(), 
+                on='Material Y#', 
+                how='left'
+            )
+            
+            # Réorganiser les colonnes pour mettre Type VC après Material Desc
+            cols_order = ['Material Y#', 'Material Desc', 'Type VC', 'Customer Sales', 'Customer Margin $', 
+                         '% Marge', 'Nb Commandes', 'Écart en jours', 'Délai Min', 'Délai Max']
+            product_df_with_type = product_df_with_type[cols_order]
+            
             # Afficher TOUS les produits et formater l'affichage
-            display_df = format_dataframe_for_display(product_df, "product")
+            display_df = format_dataframe_for_display(product_df_with_type, "product")
             st.dataframe(display_df, height=400, use_container_width=True, hide_index=True)
                 # Graphiques additionnels
             st.markdown("#### 📊 Analyses Complémentaires")
@@ -662,7 +792,7 @@ def main():
                 
                 product_line_analysis['Marge %'] = np.where(
                     product_line_analysis['Customer Sales'] > 0,
-                    (product_line_analysis['Customer Margin $'  ] / product_line_analysis['Customer Sales'] * 100),
+                    (product_line_analysis['Customer Margin $'] / product_line_analysis['Customer Sales'] * 100),
                     0
                 )
                 
@@ -670,7 +800,7 @@ def main():
 
                 display_df = product_line_analysis.copy()
                 display_df['Customer Sales'] = display_df['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
-                display_df['Customer Margin $'  ] = display_df['Customer Margin $' ].apply(lambda x: f"{x:,.2f} €")
+                display_df['Customer Margin $'] = display_df['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
                 display_df['Marge %'] = display_df['Marge %'].apply(lambda x: f"{x:.2f} %")
                 display_df['Écart en jours'] = display_df['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
                 
@@ -678,13 +808,60 @@ def main():
                 display_df = display_df.rename(columns={
                     'Product Line Desc': 'Gamme de Produit',
                     'Customer Sales': 'CA',
-                    'Customer Margin $' : 'Marge €',
+                    'Customer Margin $': 'Marge €',
                     'Marge %': 'Marge %',
                     'Écart en jours': 'Délai Moy.',
                     'Produit Unique': 'Nb Produits'
                 })
                 
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+            # AJOUT : Analyse par Type VC si le filtre est sur "Tous"
+            if len(type_vc_selected) == len(available_type_vc):
+                st.markdown("#### 🏷️ Analyse par Type VC")
+                type_vc_analysis = filtered_df.groupby('Type VC').agg({
+                    'Customer Sales': 'sum',
+                    'Customer Margin $': 'sum',
+                    'Écart en jours': 'mean',
+                    'Produit Unique': 'nunique',
+                    'Client Unique': 'nunique'
+                }).reset_index()
+                
+                type_vc_analysis['Marge %'] = np.where(
+                    type_vc_analysis['Customer Sales'] > 0,
+                    (type_vc_analysis['Customer Margin $'] / type_vc_analysis['Customer Sales'] * 100),
+                    0
+                )
+                
+                type_vc_analysis = type_vc_analysis.sort_values('Customer Sales', ascending=False)
+                
+                # Formatage pour l'affichage
+                display_type_vc = type_vc_analysis.copy()
+                display_type_vc['Customer Sales'] = display_type_vc['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
+                display_type_vc['Customer Margin $'] = display_type_vc['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
+                display_type_vc['Marge %'] = display_type_vc['Marge %'].apply(lambda x: f"{x:.2f} %")
+                display_type_vc['Écart en jours'] = display_type_vc['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
+                
+                # Renommer les colonnes
+                display_type_vc = display_type_vc.rename(columns={
+                    'Type VC': 'Type',
+                    'Customer Sales': 'CA',
+                    'Customer Margin $': 'Marge €',
+                    'Marge %': 'Marge %',
+                    'Écart en jours': 'Délai Moy.',
+                    'Produit Unique': 'Nb Produits',
+                    'Client Unique': 'Nb Clients'
+                })
+                
+                st.dataframe(display_type_vc, use_container_width=True, hide_index=True)
+                
+                # Graphique en secteurs pour Type VC
+                fig_type_vc = px.pie(
+                    values=type_vc_analysis['Customer Sales'], 
+                    names=type_vc_analysis['Type VC'], 
+                    title="🏷️ Répartition CA par Type VC"
+                )
+                st.plotly_chart(fig_type_vc, use_container_width=True)
             
     with tab2:
         if len(client_df) > 0:
@@ -716,14 +893,14 @@ def main():
             st.markdown("#### 🗺️ Analyse par Région")
             regional_analysis = filtered_df.groupby('Région').agg({
                 'Customer Sales': 'sum',
-                'Customer Margin $'  : 'sum',
+                'Customer Margin $': 'sum',
                 'Client Unique': 'nunique',
                 'Écart en jours': 'mean'
             }).reset_index()
             
             regional_analysis['Marge %'] = np.where(
                 regional_analysis['Customer Sales'] > 0,
-                (regional_analysis['Customer Margin $' ] / regional_analysis['Customer Sales'] * 100),
+                (regional_analysis['Customer Margin $'] / regional_analysis['Customer Sales'] * 100),
                 0
             )
             
@@ -732,7 +909,7 @@ def main():
             # Formatage pour l'affichage
             display_regional = regional_analysis.copy()
             display_regional['Customer Sales'] = display_regional['Customer Sales'].apply(lambda x: f"{x:,.2f} €")
-            display_regional['Customer Margin $' ] = display_regional['Customer Margin $' ].apply(lambda x: f"{x:,.2f} €")
+            display_regional['Customer Margin $'] = display_regional['Customer Margin $'].apply(lambda x: f"{x:,.2f} €")
             display_regional['Marge %'] = display_regional['Marge %'].apply(lambda x: f"{x:.2f} %")
             display_regional['Écart en jours'] = display_regional['Écart en jours'].apply(lambda x: f"{x:.1f} j" if pd.notna(x) else "N/A")
             
@@ -740,7 +917,7 @@ def main():
             display_regional = display_regional.rename(columns={
                 'Région': 'Région',
                 'Customer Sales': 'CA',
-                'Customer Margin $' : 'Marge €',
+                'Customer Margin $': 'Marge €',
                 'Marge %': 'Marge %',
                 'Client Unique': 'Nb Clients',
                 'Écart en jours': 'Délai Moy.'
